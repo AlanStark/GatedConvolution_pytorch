@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-#from models.sa_gan_l2h_unet import InpaintRUNNet, InpaintSADirciminator
+
 from models.sa_gan import InpaintSANet, InpaintSADirciminator
 from models.loss import SNDisLoss, SNGenLoss, ReconLoss, PerceptualLoss, StyleLoss
 from util.logger import TensorBoardLogger
 from util.config import Config
-from data.inpaint_dataset import InpaintDataset
+from datasets.inpaint_dataset import InpaintDataset
 from util.evaluation import AverageMeter
 from util.util import load_consistent_state_dict
 from models.vgg import vgg16_bn
@@ -26,12 +26,13 @@ logger = logging.getLogger(__name__)
 time_stamp = time.strftime('%Y%m%d%H%M', time.localtime(time.time()))
 log_dir = 'model_logs/test_{}_{}'.format(time_stamp, config.LOG_DIR)
 result_dir = 'result_logs/{}'.format(config.MODEL_RESTORE[:config.MODEL_RESTORE.find('/')])
-#tensorboardlogger = TensorBoardLogger(log_dir)
+# tensorboardlogger = TensorBoardLogger(log_dir)
 cuda0 = torch.device('cuda:{}'.format(config.GPU_IDS[0]))
 cuda1 = torch.device('cuda:{}'.format(config.GPU_IDS[1]))
 cpu0 = torch.device('cpu')
-TRAIN_SIZES = ((64,64),(128,128),(256,256))
+TRAIN_SIZES = ((64, 64), (128, 128), (256, 256))
 SIZES_TAGS = ("64x64", "128x128", "256x256")
+
 
 def logger_init():
     """
@@ -45,15 +46,19 @@ def logger_init():
     fh.setFormatter(formatter)
     logger.addHandler(fh)
 
-def img2photo(imgs):
-    return ((imgs+1)*127.5).transpose(1,2).transpose(2,3).detach().cpu().numpy()
 
-def validate(nets, loss_terms, opts, dataloader, epoch, network_type, devices=(cuda0,cuda1), batch_n="whole_test_show"):
+def img2photo(imgs):
+    return ((imgs + 1) * 127.5).transpose(1, 2).transpose(2, 3).detach().cpu().numpy()
+
+
+def validate(nets, loss_terms, opts, dataloader, epoch, network_type, devices=(cuda0, cuda1),
+             batch_n="whole_test_show"):
     """
     validate phase
     """
     netD, netG = nets["netD"], nets["netG"]
-    ReconLoss, DLoss, PercLoss, GANLoss, StyleLoss = loss_terms['ReconLoss'], loss_terms['DLoss'], loss_terms["PercLoss"], loss_terms["GANLoss"], loss_terms["StyleLoss"]
+    ReconLoss, DLoss, PercLoss, GANLoss, StyleLoss = loss_terms['ReconLoss'], loss_terms['DLoss'], loss_terms[
+        "PercLoss"], loss_terms["GANLoss"], loss_terms["StyleLoss"]
     optG, optD = opts['optG'], opts['optD']
     device0, device1 = devices
     netG.to(device0)
@@ -62,12 +67,14 @@ def validate(nets, loss_terms, opts, dataloader, epoch, network_type, devices=(c
     netD.eval()
     batch_time = AverageMeter()
     data_time = AverageMeter()
-    losses = {"g_loss":AverageMeter(),"p_loss":AverageMeter(), "s_loss":AverageMeter(), "r_loss":AverageMeter(), "whole_loss":AverageMeter(), "d_loss":AverageMeter()}
+    losses = {"g_loss": AverageMeter(), "p_loss": AverageMeter(), "s_loss": AverageMeter(), "r_loss": AverageMeter(),
+              "whole_loss": AverageMeter(), "d_loss": AverageMeter()}
 
     netG.train()
     netD.train()
     end = time.time()
-    val_save_dir = os.path.join(result_dir, "val_{}_{}".format(epoch, batch_n if isinstance(batch_n, str) else batch_n+1))
+    val_save_dir = os.path.join(result_dir,
+                                "val_{}_{}".format(epoch, batch_n if isinstance(batch_n, str) else batch_n + 1))
     val_save_real_dir = os.path.join(val_save_dir, "real")
     val_save_gen_dir = os.path.join(val_save_dir, "gen")
     val_save_comp_dir = os.path.join(val_save_dir, "comp")
@@ -92,13 +99,14 @@ def validate(nets, loss_terms, opts, dataloader, epoch, network_type, devices=(c
             masks = (masks > 0).type(torch.FloatTensor)
             imgs = F.interpolate(ori_imgs, size)
             if imgs.size(1) != 3:
-                print(t, imgs.size() )
+                print(t, imgs.size())
             pre_inter_imgs = F.interpolate(pre_complete_imgs, size)
 
-            imgs, masks, pre_complete_imgs, pre_inter_imgs = imgs.to(device0), masks.to(device0), pre_complete_imgs.to(device0), pre_inter_imgs.to(device0)
-            #masks = (masks > 0).type(torch.FloatTensor)
+            imgs, masks, pre_complete_imgs, pre_inter_imgs = imgs.to(device0), masks.to(device0), pre_complete_imgs.to(
+                device0), pre_inter_imgs.to(device0)
+            # masks = (masks > 0).type(torch.FloatTensor)
 
-            #imgs, masks = imgs.to(device), masks.to(device)
+            # imgs, masks = imgs.to(device), masks.to(device)
             imgs = (imgs / 127.5 - 1)
             # mask is 1 on masked region
             # forward
@@ -110,14 +118,12 @@ def validate(nets, loss_terms, opts, dataloader, epoch, network_type, devices=(c
                 recon_imgs, _ = netG(imgs, masks)
             complete_imgs = recon_imgs * masks + imgs * (1 - masks)
 
-
             pos_imgs = torch.cat([imgs, masks, torch.full_like(masks, 1.)], dim=1)
             neg_imgs = torch.cat([recon_imgs, masks, torch.full_like(masks, 1.)], dim=1)
             pos_neg_imgs = torch.cat([pos_imgs, neg_imgs], dim=0)
 
             pred_pos_neg = netD(pos_neg_imgs)
-            pred_pos, pred_neg = torch.chunk(pred_pos_neg,  2, dim=0)
-
+            pred_pos, pred_neg = torch.chunk(pred_pos_neg, 2, dim=0)
 
             g_loss = GANLoss(pred_neg)
 
@@ -129,7 +135,7 @@ def validate(nets, loss_terms, opts, dataloader, epoch, network_type, devices=(c
             p_loss, s_loss = p_loss.to(device0), s_loss.to(device0)
             imgs, recon_imgs, complete_imgs = imgs.to(device0), recon_imgs.to(device0), complete_imgs.to(device0)
 
-            whole_loss = r_loss + p_loss #g_loss + r_loss
+            whole_loss = r_loss + p_loss  # g_loss + r_loss
 
             # Update the recorder for losses
             losses['g_loss'].update(g_loss.item(), imgs.size(0))
@@ -144,11 +150,9 @@ def validate(nets, loss_terms, opts, dataloader, epoch, network_type, devices=(c
             # Update time recorder
             batch_time.update(time.time() - end)
 
-
             # Logger logging
 
-
-            #if t < config.STATIC_VIEW_SIZE:
+            # if t < config.STATIC_VIEW_SIZE:
             print(i, size)
             real_img = img2photo(imgs)
             gen_img = img2photo(recon_imgs)
@@ -171,14 +175,15 @@ def main():
 
     # Dataset setting
     logger.info("Initialize the dataset...")
-    val_dataset = InpaintDataset(config.DATA_FLIST[dataset_type][1],\
-                                    {mask_type:config.DATA_FLIST[config.MASKDATASET][mask_type][1] for mask_type in ('val',)}, \
-                                    resize_shape=tuple(config.IMG_SHAPES), random_bbox_shape=config.RANDOM_BBOX_SHAPE, \
-                                    random_bbox_margin=config.RANDOM_BBOX_MARGIN,
-                                    random_ff_setting=config.RANDOM_FF_SETTING)
+    val_dataset = InpaintDataset(config.DATA_FLIST[dataset_type][1], \
+                                 {mask_type: config.DATA_FLIST[config.MASKDATASET][mask_type][1] for mask_type in
+                                  ('val',)}, \
+                                 resize_shape=tuple(config.IMG_SHAPES), random_bbox_shape=config.RANDOM_BBOX_SHAPE, \
+                                 random_bbox_margin=config.RANDOM_BBOX_MARGIN,
+                                 random_ff_setting=config.RANDOM_FF_SETTING)
     val_loader = val_dataset.loader(batch_size=1, shuffle=False,
-                                        num_workers=1)
-    #print(len(val_loader))
+                                    num_workers=1)
+    # print(len(val_loader))
 
     ### Generate a new val data
 
@@ -196,41 +201,40 @@ def main():
     elif config.NETWORK_TYPE == 'sa_gated':
         netG = InpaintSANet()
         load_consistent_state_dict(netG_state_dict, netG)
-        #netG.load_state_dict(netG_state_dict)
+        # netG.load_state_dict(netG_state_dict)
 
     netD = InpaintSADirciminator()
     netVGG = vgg16_bn(pretrained=True)
 
-
-    #netD.load_state_dict(netD_state_dict)
+    # netD.load_state_dict(netD_state_dict)
     logger.info("Loading pretrained models from {} ...".format(config.MODEL_RESTORE))
 
     # Define loss
     recon_loss = ReconLoss(*(config.L1_LOSS_ALPHA))
     gan_loss = SNGenLoss(config.GAN_LOSS_ALPHA)
-    perc_loss = PerceptualLoss(weight=config.PERC_LOSS_ALPHA,feat_extractors = netVGG.to(cuda1))
-    style_loss = StyleLoss(weight=config.STYLE_LOSS_ALPHA, feat_extractors = netVGG.to(cuda1))
+    perc_loss = PerceptualLoss(weight=config.PERC_LOSS_ALPHA, feat_extractors=netVGG.to(cuda1))
+    style_loss = StyleLoss(weight=config.STYLE_LOSS_ALPHA, feat_extractors=netVGG.to(cuda1))
     dis_loss = SNDisLoss()
     lr, decay = config.LEARNING_RATE, config.WEIGHT_DECAY
     optG = torch.optim.Adam(netG.parameters(), lr=lr, weight_decay=decay)
-    optD = torch.optim.Adam(netD.parameters(), lr=4*lr, weight_decay=decay)
+    optD = torch.optim.Adam(netD.parameters(), lr=4 * lr, weight_decay=decay)
     nets = {
-        "netG":netG,
-        "netD":netD,
-        "vgg":netVGG
+        "netG": netG,
+        "netD": netD,
+        "vgg": netVGG
     }
 
     losses = {
-        "GANLoss":gan_loss,
-        "ReconLoss":recon_loss,
-        "StyleLoss":style_loss,
-        "DLoss":dis_loss,
-        "PercLoss":perc_loss
+        "GANLoss": gan_loss,
+        "ReconLoss": recon_loss,
+        "StyleLoss": style_loss,
+        "DLoss": dis_loss,
+        "PercLoss": perc_loss
 
     }
     opts = {
-        "optG":optG,
-        "optD":optD,
+        "optG": optG,
+        "optD": optD,
 
     }
     logger.info("Finish Define the Network Structure and Losses")
@@ -238,7 +242,8 @@ def main():
     # Start Training
     logger.info("Start Validation")
 
-    validate(nets, losses, opts, val_loader,0 , config.NETWORK_TYPE,devices=(cuda0,cuda1))
+    validate(nets, losses, opts, val_loader, 0, config.NETWORK_TYPE, devices=(cuda0, cuda1))
+
 
 if __name__ == '__main__':
     main()
